@@ -90,7 +90,7 @@ retail_lakehouse/
 
 ## План работ
 
-- [ ] Инфраструктура в Docker: MinIO, Iceberg REST Catalog, Trino
+- [X] Инфраструктура в Docker: MinIO, Iceberg REST Catalog, Trino
 - [ ] Загрузка датасета Olist в слой Bronze
 - [ ] Генератор ежедневных заказов
 - [ ] dbt: слой Silver (дедупликация, incremental, SCD2)

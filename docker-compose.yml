@@ -1,0 +1,56 @@
+# Retail Lakehouse — этап 1: MinIO (S3) + Iceberg REST Catalog + Trino
+# Запуск:    docker compose up -d
+# Остановка: docker compose down
+#
+# Примечание: MinIO удалил образы minio/minio и minio/mc с Docker Hub (сентябрь 2026),
+# поэтому используется архивный образ Bitnami с тем же сервером MinIO.
+
+services:
+
+  # S3-совместимое хранилище: здесь физически лежат Parquet-файлы и метаданные Iceberg
+  minio:
+    image: bitnamilegacy/minio:latest
+    container_name: minio
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+      MINIO_DEFAULT_BUCKETS: warehouse   # бакет создаётся автоматически при запуске
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # веб-консоль: http://localhost:9001
+    volumes:
+      - minio-data:/bitnami/minio/data
+
+  # Каталог Iceberg: хранит, какие таблицы есть и где лежат их метаданные
+  # ВНИМАНИЕ: на этом этапе каталог хранится в памяти контейнера.
+  # После перезапуска iceberg-rest таблицы пропадут из каталога (файлы в MinIO останутся).
+  # На следующем этапе подключим PostgreSQL, чтобы каталог сохранялся.
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    container_name: iceberg-rest
+    depends_on:
+      - minio
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+    ports:
+      - "8181:8181"
+
+  # SQL-движок: выполняет запросы к таблицам Iceberg
+  trino:
+    image: trinodb/trino:479
+    container_name: trino
+    depends_on:
+      - iceberg-rest
+    ports:
+      - "8080:8080"   # веб-интерфейс: http://localhost:8080 (логин любой, пароль пустой)
+    volumes:
+      - ./trino/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro
+
+volumes:
+  minio-data:

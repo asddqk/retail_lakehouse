@@ -110,7 +110,3 @@ git clone https://github.com/asddqk/retail_lakehouse.git
 cd retail_lakehouse
 docker compose up -d
 ```
-
-## Автор
-
-Диана Бикташова · Data Engineer (DWH) · [biktashovad@yandex.ru](mailto:biktashovad@yandex.ru)

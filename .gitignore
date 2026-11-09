@@ -1,0 +1,21 @@
+# данные и артефакты
+data/
+ci/
+dbt/retail_lakehouse/target/
+dbt/retail_lakehouse/logs/
+dbt/retail_lakehouse/dbt_packages/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# macOS / редакторы
+.DS_Store
+.vscode/
+.idea/
+
+# dbt
+dbt/retail_lakehouse/.user.yml

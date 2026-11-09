@@ -1,56 +1,180 @@
-# Retail Lakehouse — этап 1: MinIO (S3) + Iceberg REST Catalog + Trino
-# Запуск:    docker compose up -d
-# Остановка: docker compose down
+# Retail Lakehouse: MinIO (S3) + Iceberg REST Catalog + Trino + ClickHouse + Airflow (+ Kafka)
 #
-# Примечание: MinIO удалил образы minio/minio и minio/mc с Docker Hub (сентябрь 2026),
+# Запуск основного стенда:   docker compose up -d --build
+# Запуск со стримингом:      docker compose --profile streaming up -d
+# Остановка:                 docker compose down
+# Полный сброс данных:       docker compose down -v
+#
+# Веб-интерфейсы:
+#   Airflow  http://localhost:8081   (без логина)
+#   Trino    http://localhost:8080   (логин любой, пароль пустой)
+#   ClickHouse HTTP http://localhost:8123/play   (admin / password)
+#
+# MinIO удалил образы minio/minio и minio/mc с Docker Hub (сентябрь 2026),
 # поэтому используется архивный образ Bitnami с тем же сервером MinIO.
+
+x-retail-env: &retail-env
+  RETAIL_S3_ENDPOINT: http://minio:9000
+  RETAIL_S3_ACCESS_KEY: admin
+  RETAIL_S3_SECRET_KEY: password
+  RETAIL_CATALOG_TYPE: rest
+  RETAIL_CATALOG_URI: http://iceberg-rest:8181
+  RETAIL_CATALOG_WAREHOUSE: s3://warehouse/
+  RETAIL_TRINO_HOST: trino
+  RETAIL_CH_HOST: clickhouse
+  RETAIL_CH_USER: admin
+  RETAIL_CH_PASSWORD: password
+  RETAIL_KAFKA_BOOTSTRAP: kafka:9092
+  RETAIL_DATA_DIR: /opt/airflow/data
+  PYTHONPATH: /opt/airflow/src
 
 services:
 
-  # S3-совместимое хранилище: здесь физически лежат Parquet-файлы и метаданные Iceberg
+  # ---------------------------------------------------------------- хранилище
   minio:
     image: bitnamilegacy/minio:latest
     container_name: minio
     environment:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: password
-      MINIO_DEFAULT_BUCKETS: warehouse   # бакет создаётся автоматически при запуске
+      MINIO_DEFAULT_BUCKETS: warehouse,landing   # warehouse — таблицы Iceberg, landing — сырые файлы
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # веб-консоль: http://localhost:9001
+      - "9000:9000"
     volumes:
       - minio-data:/bitnami/minio/data
 
-  # Каталог Iceberg: хранит, какие таблицы есть и где лежат их метаданные
-  # ВНИМАНИЕ: на этом этапе каталог хранится в памяти контейнера.
-  # После перезапуска iceberg-rest таблицы пропадут из каталога (файлы в MinIO останутся).
-  # На следующем этапе подключим PostgreSQL, чтобы каталог сохранялся.
+  # ---------------------------------------------------------------- каталог Iceberg
+  # Каталог хранится в SQLite на томе iceberg-catalog: таблицы не пропадают после перезапуска.
   iceberg-rest:
     image: apache/iceberg-rest-fixture:1.10.1
     container_name: iceberg-rest
+    user: root                       # чтобы писать файл каталога на том
     depends_on:
       - minio
     environment:
       AWS_ACCESS_KEY_ID: admin
       AWS_SECRET_ACCESS_KEY: password
       AWS_REGION: us-east-1
+      CATALOG_URI: jdbc:sqlite:/catalog/iceberg_catalog.db
       CATALOG_WAREHOUSE: s3://warehouse/
       CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
       CATALOG_S3_ENDPOINT: http://minio:9000
       CATALOG_S3_PATH__STYLE__ACCESS: "true"
     ports:
       - "8181:8181"
+    volumes:
+      - iceberg-catalog:/catalog
 
-  # SQL-движок: выполняет запросы к таблицам Iceberg
+  # ---------------------------------------------------------------- SQL-движок
   trino:
     image: trinodb/trino:479
     container_name: trino
     depends_on:
       - iceberg-rest
+    mem_limit: 1600m                 # heap 1 ГБ (trino/jvm.config) + память вне heap
     ports:
-      - "8080:8080"   # веб-интерфейс: http://localhost:8080 (логин любой, пароль пустой)
+      - "8080:8080"
     volumes:
       - ./trino/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro
+      - ./trino/jvm.config:/etc/trino/jvm.config:ro
+
+  # ---------------------------------------------------------------- аналитическая БД
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    container_name: clickhouse
+    mem_limit: 1g
+    environment:
+      CLICKHOUSE_DB: retail
+      CLICKHOUSE_USER: admin
+      CLICKHOUSE_PASSWORD: password
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - clickhouse-data:/var/lib/clickhouse
+
+  # ---------------------------------------------------------------- оркестрация
+  # Airflow 3 в режиме standalone: api-server, scheduler, dag-processor и triggerer в одном контейнере.
+  airflow:
+    build: ./airflow
+    image: retail-airflow:latest
+    container_name: airflow
+    command: standalone
+    depends_on:
+      - trino
+      - clickhouse
+    environment:
+      <<: *retail-env
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"   # вход без пароля (только для локального стенда)
+      AIRFLOW__CORE__PARALLELISM: "4"
+      AIRFLOW__API__WORKERS: "1"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/state/airflow.db
+      RETAIL_DBT_PROJECT_DIR: /opt/airflow/dbt/retail_lakehouse
+      RETAIL_DBT_EXECUTABLE: /opt/airflow/dbt_venv/bin/dbt
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./dbt:/opt/airflow/dbt
+      - ./benchmarks:/opt/airflow/benchmarks
+      - ./data:/opt/airflow/data
+      - airflow-state:/opt/airflow/state
+
+  # ---------------------------------------------------------------- стриминг (профиль streaming)
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: kafka
+    profiles: [streaming]
+    environment:
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"
+    ports:
+      - "29092:29092"
+
+  stream-producer:
+    image: retail-airflow:latest
+    container_name: stream-producer
+    profiles: [streaming]
+    depends_on: [kafka]
+    restart: on-failure
+    environment: *retail-env
+    command: python -m retail.streaming.producer --rate 5
+    volumes:
+      - ./src:/opt/airflow/src
+
+  stream-consumer:
+    image: retail-airflow:latest
+    container_name: stream-consumer
+    profiles: [streaming]
+    depends_on: [kafka, iceberg-rest]
+    restart: on-failure
+    environment: *retail-env
+    command: python -m retail.streaming.consumer --batch-size 500 --flush-seconds 30
+    volumes:
+      - ./src:/opt/airflow/src
 
 volumes:
   minio-data:
+  iceberg-catalog:
+  clickhouse-data:
+  airflow-state:

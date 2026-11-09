@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Сырые данные из landing, загруженные в Iceberg как есть (все поля строковые).
+    database: "{{ target.database }}"
+    schema: bronze
+    tables:
+      - name: customers
+      - name: sellers
+      - name: products
+      - name: product_prices
+      - name: orders
+        description: Заказы. Один заказ может прийти несколько раз (новый + обновления статуса + дубли).
+      - name: order_items
+      - name: order_payments

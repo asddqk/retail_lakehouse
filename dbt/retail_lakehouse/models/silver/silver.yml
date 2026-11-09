@@ -1,0 +1,81 @@
+version: 2
+
+models:
+  - name: silver_orders
+    description: Заказы после очистки и дедупликации, одна строка на заказ (последняя версия).
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              # заказы из Kafka могут прийти раньше, чем покупатель появится в справочнике
+              # (late-arriving dimension), поэтому предупреждение, а не ошибка
+              arguments:
+                to: ref('silver_customers')
+                field: customer_id
+              config:
+                severity: warn
+      - name: order_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [created, approved, invoiced, processing, shipped, delivered, canceled, unavailable]
+      - name: order_purchase_ts
+        data_tests: [not_null]
+
+  - name: silver_order_items
+    description: Позиции заказов, одна строка на (order_id, order_item_id).
+    columns:
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              # позиции отбракованных заказов (без customer_id) остаются «сиротами» — это предупреждение, не ошибка
+              arguments:
+                to: ref('silver_orders')
+                field: order_id
+              config:
+                severity: warn
+      - name: product_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('silver_products')
+                field: product_id
+      - name: price
+        data_tests: [not_null]
+
+  - name: silver_order_payments
+    columns:
+      - name: order_id
+        data_tests: [not_null]
+      - name: payment_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [credit_card, boleto, voucher, debit_card, not_defined]
+
+  - name: silver_customers
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+
+  - name: silver_sellers
+    columns:
+      - name: seller_id
+        data_tests: [unique, not_null]
+
+  - name: silver_products
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+
+  - name: silver_product_prices_scd2
+    description: История цен (SCD2), восстановленная из ежедневных выгрузок прайса.
+    columns:
+      - name: product_id
+        data_tests: [not_null]
+      - name: list_price
+        data_tests: [not_null]

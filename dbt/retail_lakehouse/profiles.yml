@@ -1,0 +1,21 @@
+retail_lakehouse:
+  target: trino
+  outputs:
+    # Основной контур: Trino + Iceberg (docker-compose)
+    trino:
+      type: trino
+      method: none
+      host: "{{ env_var('RETAIL_TRINO_HOST', 'trino') }}"
+      port: "{{ env_var('RETAIL_TRINO_PORT', '8080') | int }}"
+      user: dbt
+      database: iceberg      # каталог Trino
+      schema: silver
+      threads: 1             # каталог Iceberg на SQLite: коммиты по одному
+      http_scheme: http
+
+    # CI: те же модели на DuckDB, чтобы проверять SQL без поднятия стенда
+    ci:
+      type: duckdb
+      path: "{{ env_var('RETAIL_DUCKDB_PATH', 'ci/retail.duckdb') }}"
+      schema: main
+      threads: 4

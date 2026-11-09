@@ -1,0 +1,8 @@
+astronomer-cosmos==1.16.0
+pyiceberg[pyarrow]==0.12.0
+pyarrow==26.0.1
+polars==2.1.0
+clickhouse-connect==1.12.0
+trino==0.340.0
+kafka-python==3.0.13
+psutil

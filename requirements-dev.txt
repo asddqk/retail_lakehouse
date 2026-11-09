@@ -1,0 +1,13 @@
+# Зависимости для тестов и CI (без Docker): pytest + moto (S3) + SQLite-каталог Iceberg + dbt на DuckDB
+pyiceberg[pyarrow,sql-sqlite]==0.12.0
+pyarrow==26.0.1
+polars==2.1.0
+duckdb
+dbt-core==1.12.6
+dbt-duckdb==1.11.1
+moto[server]==5.2.5
+clickhouse-connect==1.12.0
+trino==0.340.0
+kafka-python==3.0.13
+psutil
+pytest

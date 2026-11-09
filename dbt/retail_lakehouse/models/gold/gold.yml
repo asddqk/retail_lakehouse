@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: fct_sales
+    description: Факт продаж (зерно — позиция заказа) с ценой из прайса на момент покупки.
+    columns:
+      - name: order_id
+        data_tests: [not_null]
+      - name: order_date
+        data_tests: [not_null]
+      - name: customer_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: seller_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_sellers')
+                field: seller_id
+      - name: product_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+
+  - name: dim_customers
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+
+  - name: dim_sellers
+    columns:
+      - name: seller_id
+        data_tests: [unique, not_null]
+
+  - name: dim_products
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+
+  - name: mart_daily_sales
+    description: Ежедневные продажи — выручка, заказы, средний чек.
+    columns:
+      - name: order_date
+        data_tests: [unique, not_null]
+
+  - name: mart_category_weekly
+    description: Выручка по категориям по неделям и изменение неделя к неделе.
+
+  - name: mart_seller_daily
+    description: Продажи по продавцам по дням.
+
+  - name: mart_top_products_30d
+    description: Топ-50 товаров по выручке за последние 30 дней.
+    columns:
+      - name: revenue_rank
+        data_tests: [unique]
